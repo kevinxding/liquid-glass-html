@@ -1,5 +1,8 @@
 # Fieldnotes · GPUI glass lab
 
+# PLEASE DO NOT USE THIS (or do at your own risk)
+### I am intentionally not making a crate for this because this is ABSOLUTELY NOT READY for prod; this was a vibe coded experiment and some people asked for this, so there
+
 A native GPUI-CE demo with an editorial canvas, bundled photographs, floating capsule
 buttons, a text input, a shape lens, and live optical controls. The demo buttons have
 no application action. Scroll the canvas underneath the glass to inspect distortion.
