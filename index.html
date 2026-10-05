@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquid Glass</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560&family=Outfit:wght@400;500;640&display=swap" />
+<style>
+  :root { --ink:#14241e; --pine:#14302a; --sage:#23483c; --paper:#f6f3ec; --line:#c5d4cb; --mute:#5d7368; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--pine); color:var(--ink); font-family:Outfit, sans-serif; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  .hit { position:fixed; z-index:2; cursor:grab; user-select:none; touch-action:none; color:var(--ink); display:flex; flex-direction:column; justify-content:space-between; padding:18px 20px; }
+  .hit h1 { font-family:Fraunces, serif; font-weight:560; font-size:32px; margin:4px 0 0; letter-spacing:-0.03em; }
+  .kicker { letter-spacing:.16em; text-transform:uppercase; font-size:12px; color:var(--sage); font-weight:640; }
+  aside { position:fixed; z-index:3; top:14px; right:14px; bottom:14px; width:min(340px, calc(100% - 28px)); overflow:auto; background:color-mix(in srgb, var(--paper) 92%, transparent); border:1px solid var(--line); border-radius:20px; padding:16px; box-shadow:0 18px 50px color-mix(in srgb, var(--pine) 28%, transparent); }
+  h2 { font-family:Fraunces, serif; margin:0; font-size:26px; }
+  p { color:var(--mute); font-size:13px; line-height:1.45; }
+  .row { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
+  button { border:1px solid var(--line); background:#f3faf5; color:var(--ink); border-radius:999px; min-height:40px; padding:0 12px; font:inherit; cursor:pointer; }
+  button[data-on="true"] { background:var(--sage); color:var(--paper); border-color:var(--sage); }
+  label { display:grid; grid-template-columns:1fr auto; gap:2px 10px; font-size:14px; margin:6px 0; }
+  label b { font-weight:500; color:var(--sage); font-variant-numeric:tabular-nums; }
+  input { grid-column:1 / -1; accent-color:#3d6b58; }
+  h3 { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--mute); margin:14px 0 6px; }
+  @media (max-width: 800px) {
+    aside { top:auto; left:10px; right:10px; width:auto; max-height:46dvh; }
+    .hit h1 { font-size:24px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button class="hit" id="hit" type="button" aria-label="拖动主玻璃"><div><div class="kicker">拖动</div><h1>液态玻璃</h1></div><div>滚轮让色块动起来</div></button>
+<aside>
+  <h2>光学台</h2>
+  <p>网页近似 <a href="https://github.com/luciascarlet/gpui-glass-demo">gpui-glass-demo</a> 的液态玻璃：边缘折射、色散、磨砂和轮廓光。不是 macOS 的 Metal 着色器。</p>
+  <h3>预设</h3>
+  <div class="row" id="presets"></div>
+  <h3>形状</h3>
+  <div class="row" id="shapes"></div>
+  <h3>参数</h3>
+  <div id="sliders"></div>
+</aside>
+<script>
+const VERT = "#version 300 es\nlayout(location=0) in vec2 a;\nvoid main(){ gl_Position = vec4(a, 0.0, 1.0); }\n";
+const FRAG = "#version 300 es\nprecision highp float;\nout vec4 o;\nuniform sampler2D uScene;\nuniform vec2 uFb;\nuniform float uDpr;\nuniform vec4 uA; // blur, opacity, saturation, edge\nuniform vec4 uB; // distortion, profile, dispersion, splay\nuniform vec4 uC; // light, fog, fogEdge, fogOpacity\nuniform vec4 uD; // outlineOp, outlineW, sharpOp, sharpW\nuniform vec4 uE; // sharpFocus, sharpSpread, softOp, softW\nuniform vec4 uF; // softFocus, softSpread, innerOp, innerRadius\nuniform vec4 uG; // innerW, innerInset, outerOp, outerRadius\nuniform vec4 uH; // outerOffset, edgeInt, edgeRefW, diffInt\nuniform vec4 uI; // diffRadius, smoothing, _, _\nuniform vec3 uTint;\nuniform vec4 uP0; uniform vec4 uP1; uniform vec4 uP2;\nuniform vec3 uShape;\nuniform vec3 uRad;\nuniform vec4 uS0; uniform vec4 uS1;\n\nvec2 toPx(vec2 frag){\n  return vec2(frag.x / uDpr, (uFb.y - frag.y) / uDpr);\n}\nvec2 toUv(vec2 px){\n  return vec2(px.x * uDpr / uFb.x, 1.0 - px.y * uDpr / uFb.y);\n}\nvec3 sceneAt(vec2 px){\n  return texture(uScene, clamp(toUv(px), 0.001, 0.999)).rgb;\n}\nvec3 frostAt(vec2 px, float radius){\n  if(radius < 0.45) return sceneAt(px);\n  float s = radius * 0.55;\n  vec3 c = sceneAt(px) * 0.28;\n  c += sceneAt(px + vec2(s, 0.0)) * 0.12;\n  c += sceneAt(px + vec2(-s, 0.0)) * 0.12;\n  c += sceneAt(px + vec2(0.0, s)) * 0.12;\n  c += sceneAt(px + vec2(0.0, -s)) * 0.12;\n  c += sceneAt(px + vec2(s, s) * 0.7) * 0.06;\n  c += sceneAt(px + vec2(-s, s) * 0.7) * 0.06;\n  c += sceneAt(px + vec2(s, -s) * 0.7) * 0.06;\n  c += sceneAt(px + vec2(-s, -s) * 0.7) * 0.06;\n  return c;\n}\n\nfloat sdRound(vec2 p, vec2 b, float r){\n  vec2 q = abs(p) - b + vec2(r);\n  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;\n}\nfloat sdSuper(vec2 p, vec2 b){\n  vec2 q = abs(p) / max(b, vec2(1.0));\n  float n = 4.0;\n  float m = pow(pow(q.x, n) + pow(q.y, n), 1.0 / n);\n  return (m - 1.0) * min(b.x, b.y);\n}\nfloat sdFlower(vec2 p, float r){\n  float a = atan(p.y, p.x);\n  float pr = r * (0.64 + 0.36 * cos(5.0 * a));\n  return length(p) - pr;\n}\nfloat sdPane(vec2 p, int shape, vec2 boxHalf, float rad){\n  if(shape == 1){\n    float r = min(boxHalf.x, boxHalf.y);\n    return sdRound(p, boxHalf, r);\n  }\n  if(shape == 2) return sdFlower(p, min(boxHalf.x, boxHalf.y) * 0.96);\n  if(shape == 3) return sdSuper(p, boxHalf * 0.98);\n  return sdRound(p, boxHalf, rad);\n}\nfloat paneDist(vec2 px, vec4 box, int shape, float rad, vec2 sc){\n  vec2 p = (px - box.xy) / max(sc, vec2(0.2));\n  float d = sdPane(p, shape, box.zw, rad);\n  return d * min(sc.x, sc.y);\n}\nvec2 paneN(vec2 px, vec4 box, int shape, float rad, vec2 sc){\n  float e = 1.15;\n  float dx = paneDist(px + vec2(e, 0.0), box, shape, rad, sc) - paneDist(px - vec2(e, 0.0), box, shape, rad, sc);\n  float dy = paneDist(px + vec2(0.0, e), box, shape, rad, sc) - paneDist(px - vec2(0.0, e), box, shape, rad, sc);\n  return normalize(vec2(dx, dy) + 1e-5);\n}\nfloat shapeW(float w){\n  float lin = w;\n  float circ = sin(clamp(w, 0.0, 1.0) * 1.5707963);\n  float sup = pow(max(w, 0.0), 0.42);\n  float p = clamp(uB.y, 0.0, 2.0);\n  if(p < 1.0) return mix(lin, circ, p);\n  return mix(circ, sup, p - 1.0);\n}\nfloat lobe(float facing, float spread, float amount, float radial){\n  float l = clamp((facing - spread) / max(1.0 - spread, 1e-4), 0.0, 1.0);\n  l *= radial;\n  return l / max(1.0 + amount * (1.0 - l), 1e-4);\n}\nfloat radialBand(float d, float width, float inset){\n  float z = -(d + inset);\n  float h = max(width, 0.35);\n  float t = clamp(z / h, 0.0, 1.0);\n  float radial = mix(step(t, 1.0), 1.0 - t, 0.75);\n  float fw = 1.25;\n  radial *= clamp(z / fw + 0.5, 0.0, 1.0) * clamp((h - z) / fw + 0.5, 0.0, 1.0);\n  return radial;\n}\nvec3 radiance(vec3 bcol, vec3 c, float intensity){\n  float a = max(intensity, 0.0);\n  float g = a / (1.0 + a);\n  vec3 glow = bcol + (1.0 - bcol) * c * g;\n  float peak = max(c.r, max(c.g, c.b));\n  vec3 hue = c / max(peak, 1e-4);\n  float chroma = (peak - min(c.r, min(c.g, c.b))) / max(peak, 1e-4);\n  float Yb = dot(bcol, vec3(0.2126, 0.7152, 0.0722));\n  float bright = smoothstep(0.35, 0.85, Yb);\n  vec3 loss = bcol * (1.0 - hue) * chroma;\n  float Yl = dot(loss, vec3(0.2126, 0.7152, 0.0722));\n  loss *= min(1.0, 0.10 / max(Yl, 1e-4));\n  return clamp(glow - loss * g * bright, 0.0, 1.0);\n}\nvec3 grade(vec3 col){\n  float l = dot(col, vec3(0.2126, 0.7152, 0.0722));\n  col = mix(vec3(l), col, uA.z);\n  col = mix(col, uTint, clamp(uA.y, 0.0, 1.0));\n  return clamp(col, 0.0, 1.0);\n}\nvec3 transmit(vec2 px, float d, vec2 n){\n  float depth = clamp(-d / max(uA.w, 1.0), 0.0, 1.0);\n  float edgeAmt = shapeW(1.0 - depth);\n  vec2 radial = normalize(px - vec2(0.0)); // replaced per call\n  radial = n;\n  vec2 dir = normalize(mix(n, n, uB.w * edgeAmt));\n  vec2 off = dir * (uB.x * edgeAmt);\n  float disp = uB.z;\n  vec3 g = frostAt(px + off, uA.x);\n  vec3 rs = sceneAt(px + off + dir * disp * 1.35);\n  vec3 bs = sceneAt(px + off - dir * disp * 1.35);\n  vec3 col = vec3(rs.r, g.g, bs.b);\n  col = mix(g, col, clamp(disp * 0.85, 0.0, 1.0));\n  if(uC.y > 0.4){\n    float m = smoothstep(0.0, max(uC.z, 1.0), -d) * uC.w;\n    col = mix(col, frostAt(px, uC.y), clamp(m, 0.0, 1.0));\n  }\n  return grade(col);\n}\n\nvoid main(){\n  vec2 px = toPx(gl_FragCoord.xy);\n  vec3 col = sceneAt(px);\n  vec4 box[3];\n  box[0]=uP0; box[1]=uP1; box[2]=uP2;\n  int shape[3];\n  shape[0]=int(uShape.x); shape[1]=int(uShape.y); shape[2]=int(uShape.z);\n  float rad[3];\n  rad[0]=uRad.x; rad[1]=uRad.y; rad[2]=uRad.z;\n  vec2 sc[3];\n  sc[0]=uS0.xy; sc[1]=uS0.zw; sc[2]=uS1.xy;\n  vec2 up = vec2(0.0, -1.0);\n\n  for(int i=0;i<3;i++){\n    if(box[i].z < 2.0) continue;\n    float d = paneDist(px, box[i], shape[i], rad[i], sc[i]);\n    vec2 ldir = vec2(0.0, 1.0);\n    vec2 sp = (px - box[i].xy) - ldir * (uG.w * 0.65 + uH.x);\n    vec4 sbox = box[i];\n    sbox.xy = px - sp;\n    float sd = paneDist(px - ldir * (uG.w * 0.65 + uH.x), box[i], shape[i], rad[i], sc[i]);\n    float shade = smoothstep(uG.w * 3.2, 0.0, sd);\n    shade *= smoothstep(-1.0, 8.0, d);\n    col *= 1.0 - shade * uG.z * uC.x;\n  }\n\n  for(int i=0;i<3;i++){\n    if(box[i].z < 2.0) continue;\n    float d = paneDist(px, box[i], shape[i], rad[i], sc[i]);\n    float aa = 1.15;\n    float cover = 1.0 - smoothstep(-aa, aa, d);\n    if(cover < 0.004) {\n      float ring = 1.0 - smoothstep(0.0, uD.y + 1.1, abs(d));\n      col = mix(col, col * vec3(0.12, 0.14, 0.13), ring * uD.x * uC.x);\n      continue;\n    }\n    vec2 n = paneN(px, box[i], shape[i], rad[i], sc[i]);\n    vec2 local = px - box[i].xy;\n    vec2 radial = normalize(local / max(box[i].zw, vec2(1.0)) + 1e-4);\n    float depth = clamp(-d / max(uA.w, 1.0), 0.0, 1.0);\n    float edgeAmt = shapeW(1.0 - depth);\n    vec2 dir = normalize(mix(n, radial, clamp(uB.w, 0.0, 1.0) * edgeAmt));\n    float mag = uB.x * edgeAmt;\n    vec2 off = dir * mag;\n    vec3 g = frostAt(px + off, uA.x);\n    float disp = uB.z;\n    vec3 rs = sceneAt(px + off + dir * disp * 1.45);\n    vec3 bs = sceneAt(px + off - dir * disp * 1.45);\n    vec3 glass = vec3(rs.r, g.g, bs.b);\n    glass = mix(g, glass, clamp(disp * 0.9, 0.0, 1.0));\n    if(uC.y > 0.4){\n      float m = smoothstep(0.0, max(uC.z, 1.0), -d) * uC.w;\n      glass = mix(glass, frostAt(px, uC.y), clamp(m, 0.0, 1.0));\n    }\n    glass = grade(glass);\n\n    float edgeBand = smoothstep(uH.z + 10.0, 0.0, -d);\n    vec3 ext = sceneAt(px + n * (6.0 + uH.z));\n    glass = radiance(glass, ext, uH.y * edgeBand);\n\n    vec3 bleed = sceneAt(px + n * 14.0) + sceneAt(px + n * 32.0);\n    bleed += sceneAt(px + n * 22.0 + vec2(n.y, -n.x) * 14.0);\n    bleed += sceneAt(px + n * 22.0 + vec2(-n.y, n.x) * 14.0);\n    bleed *= 0.25;\n    float fall = exp((-d) / max(uI.x, 1.0));\n    glass = radiance(glass, bleed, uI.y > -1.0 ? uH.w * fall : 0.0);\n\n    float rb = radialBand(d, uG.x, uG.y);\n    float facing = dot(n, up);\n    float inner = lobe(-facing, 0.2, 2.0, rb);\n    glass *= 1.0 - uF.z * uC.x * inner;\n\n    float rSharp = radialBand(d, uD.w, 0.0);\n    float Hs = lobe(facing, uE.y, uE.x, rSharp) + lobe(-facing, uE.y, uE.x, rSharp);\n    glass *= 1.0 + (uC.x * uD.z) * Hs * (3.0 - 2.0 * glass);\n\n    float rSoft = radialBand(d, uE.w, 0.0);\n    float Ho = lobe(facing, uF.y, uF.x, rSoft) + lobe(-facing, uF.y, uF.x, rSoft);\n    glass *= 1.0 + (uC.x * uE.z * 0.55) * Ho * (3.0 - 2.0 * glass);\n\n    float ring = 1.0 - smoothstep(0.0, max(uD.y, 0.6), abs(d));\n    glass = mix(glass, glass * vec3(0.22, 0.24, 0.23), ring * uD.x * uC.x * cover);\n    float hair = 1.0 - smoothstep(0.0, 1.6, abs(d + 0.55));\n    float topLit = clamp(dot(n, vec2(0.0, -1.0)) * 0.65 + 0.35, 0.0, 1.0);\n    glass += vec3(1.0) * hair * topLit * uD.z * uC.x * 0.55;\n    glass = clamp(glass, 0.0, 1.0);\n    col = mix(col, glass, cover);\n  }\n  o = vec4(col, 1.0);\n}\n";
+const base = {blur:3,opacity:0.07,saturation:1.2,edge:14,distortion:22,profile:1,dispersion:0.65,splay:0.12,light:0.65,fog:0,fogEdge:14,fogOpacity:1,outlineOpacity:0.1875,outlineWidth:1,sharpOpacity:1,sharpWidth:1,sharpFocus:0,sharpSpread:0.17364818,softOpacity:1,softWidth:8,softFocus:11.333333,softSpread:0.6156615,innerOpacity:0.12,innerRadius:5,innerWidth:2,innerInset:3,outerOpacity:0.07,outerRadius:4,outerOffset:1.4,edgeIntensity:0.8,edgeReflectWidth:3,diffuseIntensity:0.3,diffuseRadius:34};
+const presets = {
+  glass: ["玻璃", base],
+  clear: ["清透", {...base, blur:0, opacity:0.02, saturation:1.05, distortion:26, dispersion:0.2, light:0.85, edgeIntensity:0.45, diffuseIntensity:0.12}],
+  frost: ["磨砂", {...base, blur:36, opacity:0.16, saturation:0.82, distortion:7, dispersion:0.08, splay:0.04, fog:26, fogOpacity:0.9, light:0.4, edgeIntensity:0.25, diffuseIntensity:0.55, diffuseRadius:70}],
+  prism: ["棱镜", {...base, blur:0, opacity:0.03, saturation:1.55, edge:26, distortion:32, dispersion:2.5, splay:0.88, profile:1.4, light:1.05, edgeIntensity:1.35, diffuseIntensity:0.62}]
+};
+let optics = {...base};
+let shape = 0;
+let scroll = 40, vel = 0.35;
+const canvas = document.getElementById("c");
+const gl = canvas.getContext("webgl2", {alpha:false, antialias:false, preserveDrawingBuffer:true});
+function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,3,-1,-1,3]), gl.STATIC_DRAW);
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+const loc = {};
+for (const n of ["uScene","uFb","uDpr","uA","uB","uC","uD","uE","uF","uG","uH","uI","uTint","uP0","uP1","uP2","uShape","uRad","uS0","uS1"]) loc[n]=gl.getUniformLocation(prog,n);
+const scene = document.createElement("canvas");
+const ctx = scene.getContext("2d");
+function round(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function drawScene(w,h,time){
+  const dpr=Math.min(devicePixelRatio||1,1.25);
+  const pw=Math.max(1,w*dpr|0), ph=Math.max(1,h*dpr|0);
+  if(scene.width!==pw||scene.height!==ph){ scene.width=pw; scene.height=ph; }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const g=ctx.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,"#102924"); g.addColorStop(0.38,"#1f6d62"); g.addColorStop(0.62,"#e7a56a"); g.addColorStop(0.78,"#f3d7ae"); g.addColorStop(1,"#efe6d6");
+  ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  const sunX=w*0.72, sunY=h*0.36;
+  const glow=ctx.createRadialGradient(sunX,sunY,10,sunX,sunY,Math.min(w,h)*0.42);
+  glow.addColorStop(0,"rgba(255,236,206,0.95)"); glow.addColorStop(0.18,"rgba(255,196,120,0.55)"); glow.addColorStop(1,"rgba(255,196,120,0)");
+  ctx.fillStyle=glow; ctx.fillRect(0,0,w,h);
+  ctx.beginPath(); ctx.arc(sunX,sunY,Math.min(w,h)*0.055,0,Math.PI*2); ctx.fillStyle="#fff4df"; ctx.fill();
+  const hill=(base,amp,color,phase)=>{ ctx.beginPath(); ctx.moveTo(0,h); for(let x=0;x<=w;x+=8){ ctx.lineTo(x, base+Math.sin(x*0.004+phase)*amp); } ctx.lineTo(w,h); ctx.closePath(); ctx.fillStyle=color; ctx.fill(); };
+  hill(h*0.58,28,"#1b4a40",0.4); hill(h*0.66,22,"#2f6a52",1.7); hill(h*0.74,16,"#c98462",2.4);
+  ctx.fillStyle="rgba(255,244,224,0.28)"; ctx.font="660 "+Math.max(72,w*0.11)+"px Fraunces, serif"; ctx.fillText("LIQUID", w*0.05, h*0.16);
+  const tiles=[["#e25b45","#fff7f4","CORAL"],["#2c62e0","#f4f7ff","COBALT"],["#d7e15a","#1c2410","CITRON"],["#171717","#f6f3ec","INK"],["#f4efe4","#1c2418","PAPER"],["#0e8f78","#f3fff9","PINE"],["#ef8f3a","#fff8f1","AMBER"],["#7a3e9d","#fbf6ff","PLUM"]];
+  const tileW=Math.min(210,w*0.22), tileH=118, gap=14, span=4*(tileH+gap);
+  const origin=((scroll%span)+span)%span, left=28;
+  for(let row=-1; row<10; row++) for(let col=0; col<3; col++){
+    const y=h*0.2+row*(tileH+gap)-origin, x=left+col*(tileW+gap);
+    if(y>h||y<-tileH) continue;
+    const [bg,fg,title]=tiles[Math.abs(row*3+col)%tiles.length];
+    round(x,y,tileW,tileH,22); ctx.fillStyle=bg; ctx.fill(); ctx.fillStyle=fg; ctx.font="640 26px Outfit, sans-serif"; ctx.fillText(title,x+18,y+68);
+  }
+}
+const panes=[{x:360,y:400,w:360,h:460,shape:0,sx:1,sy:1},{x:250,y:130,w:220,h:70,shape:1,sx:1,sy:1},{x:530,y:620,w:140,h:140,shape:2,sx:1,sy:1}];
+function layout(){
+  const w=canvas.clientWidth, h=canvas.clientHeight;
+  if(w<800){ panes[0].x=w*0.5; panes[0].y=h*0.24; panes[0].w=Math.min(300,w-36); panes[0].h=Math.min(260,h*0.3); panes[1].x=w*0.28; panes[1].y=h*0.42; panes[2].x=w*0.72; panes[2].y=h*0.4; panes[2].w=panes[2].h=100; }
+  else if(!moved){ panes[0].x=360; panes[0].y=h*0.5; panes[0].w=360; panes[0].h=460; panes[1].x=250; panes[1].y=h*0.16; panes[2].x=530; panes[2].y=h*0.78; }
+  panes[0].shape=shape;
+}
+let moved=false;
+function frame(t){
+  vel=vel*0.92+0.08; scroll+=vel; layout();
+  const w=canvas.clientWidth, h=canvas.clientHeight, dpr=Math.min(devicePixelRatio||1,1.25);
+  const W=Math.max(1,w*dpr|0), H=Math.max(1,h*dpr|0);
+  if(canvas.width!==W||canvas.height!==H){ canvas.width=W; canvas.height=H; }
+  drawScene(w,h,t);
+  gl.viewport(0,0,W,H); gl.useProgram(prog);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,scene);
+  const o=optics;
+  gl.uniform1i(loc.uScene,0); gl.uniform2f(loc.uFb,W,H); gl.uniform1f(loc.uDpr,dpr);
+  gl.uniform4f(loc.uA,o.blur,o.opacity,o.saturation,o.edge);
+  gl.uniform4f(loc.uB,o.distortion,o.profile,o.dispersion,o.splay);
+  gl.uniform4f(loc.uC,o.light,o.fog,o.fogEdge,o.fogOpacity);
+  gl.uniform4f(loc.uD,o.outlineOpacity,o.outlineWidth,o.sharpOpacity,o.sharpWidth);
+  gl.uniform4f(loc.uE,o.sharpFocus,o.sharpSpread,o.softOpacity,o.softWidth);
+  gl.uniform4f(loc.uF,o.softFocus,o.softSpread,o.innerOpacity,o.innerRadius);
+  gl.uniform4f(loc.uG,o.innerWidth,o.innerInset,o.outerOpacity,o.outerRadius);
+  gl.uniform4f(loc.uH,o.outerOffset,o.edgeIntensity,o.edgeReflectWidth,o.diffuseIntensity);
+  gl.uniform4f(loc.uI,o.diffuseRadius,0,0,0);
+  gl.uniform3f(loc.uTint,0.97,0.97,0.97);
+  const pack=(p)=>[p.x,p.y,p.w/2,p.h/2,p.shape,Math.min(p.w,p.h)*0.28,p.sx,p.sy];
+  const a=pack(panes[0]), b=pack(panes[1]), c=pack(panes[2]);
+  gl.uniform4f(loc.uP0,a[0],a[1],a[2],a[3]); gl.uniform4f(loc.uP1,b[0],b[1],b[2],b[3]); gl.uniform4f(loc.uP2,c[0],c[1],c[2],c[3]);
+  gl.uniform3f(loc.uShape,a[4],b[4],c[4]); gl.uniform3f(loc.uRad,a[5],b[5],c[5]);
+  gl.uniform4f(loc.uS0,a[6],a[7],b[6],b[7]); gl.uniform4f(loc.uS1,c[6],c[7],1,1);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0); gl.drawArrays(gl.TRIANGLES,0,3);
+  const hit=document.getElementById("hit");
+  const p=panes[0];
+  hit.style.left=p.x-p.w/2+"px"; hit.style.top=p.y-p.h/2+"px"; hit.style.width=p.w+"px"; hit.style.height=p.h+"px";
+  hit.style.borderRadius = p.shape===1?"999px":p.shape===2?"46%":"28px";
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+addEventListener("resize", ()=>{ moved=false; });
+addEventListener("wheel", e=>{ e.preventDefault(); vel+=e.deltaY*0.08; }, {passive:false});
+const hit=document.getElementById("hit");
+let drag=null;
+hit.addEventListener("pointerdown", e=>{ drag={dx:e.clientX-panes[0].x, dy:e.clientY-panes[0].y}; hit.setPointerCapture(e.pointerId); });
+hit.addEventListener("pointermove", e=>{ if(!drag) return; panes[0].x=e.clientX-drag.dx; panes[0].y=e.clientY-drag.dy; moved=true; });
+hit.addEventListener("pointerup", ()=> drag=null);
+const presetBox=document.getElementById("presets");
+for (const [k,[label]] of Object.entries(presets)){
+  const b=document.createElement("button"); b.textContent=label; b.dataset.on=k==="glass";
+  b.onclick=()=>{ optics={...presets[k][1]}; document.querySelectorAll("#presets button").forEach(x=>x.dataset.on="false"); b.dataset.on="true"; sync(); };
+  presetBox.appendChild(b);
+}
+const shapeBox=document.getElementById("shapes");
+["圆角","胶囊","花朵","超椭圆"].forEach((label,i)=>{
+  const b=document.createElement("button"); b.textContent=label; b.dataset.on=i===0?"true":"false";
+  b.onclick=()=>{ shape=i; shapeBox.querySelectorAll("button").forEach((x,j)=>x.dataset.on=j===i); };
+  shapeBox.appendChild(b);
+});
+const sliders=[["distortion","折射",-40,40],["edge","边缘宽度",2,36],["dispersion","色散",0,3],["splay","展角",0,1],["blur","磨砂",0,64],["light","光照",0,1.5]];
+const sliderBox=document.getElementById("sliders");
+function sync(){ for (const s of sliderBox.querySelectorAll("input")) s.value=optics[s.dataset.k]; for (const s of sliderBox.querySelectorAll("b")) s.textContent=Number(optics[s.dataset.k]).toFixed(1); }
+for (const [k,label,min,max] of sliders){
+  const lab=document.createElement("label");
+  lab.innerHTML=`<span>${label}</span><b data-k="${k}"></b><input data-k="${k}" type="range" min="${min}" max="${max}" step="0.1" />`;
+  lab.querySelector("input").oninput=e=>{ optics[k]=Number(e.target.value); lab.querySelector("b").textContent=Number(e.target.value).toFixed(1); };
+  sliderBox.appendChild(lab);
+}
+sync();
+</script>
+</body>
+</html>
