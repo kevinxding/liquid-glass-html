@@ -1,0 +1,23 @@
+/target/
+/artifacts/
+/crates/*/target/
+__pycache__/
+.DS_Store
+
+# Local scrolling playground (excluded from public source)
+/src/bin/scroll-lab.rs
+/scripts/package-scroll-lab.sh
+/presets/
+
+# Local research/session data and credentials
+.env
+.env.*
+*.trace
+*.gputrace
+*.log
+*.pyc
+/.agents/
+/.codex/
+/.aws/
+/research-output/
+/captures/

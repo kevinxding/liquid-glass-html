@@ -1,0 +1,54 @@
+[package]
+name = "gpui-glass-demo"
+version = "0.1.0"
+edition = "2024"
+default-run = "gpui-glass"
+publish = false
+license = "BSD-3-Clause"
+
+[features]
+bench = ["gpui_wgpu/test-support"]
+
+[dependencies]
+gpui = { package = "gpui-ce", version = "=0.2.2", default-features = false }
+gpui_platform = { package = "gpui_ce_platform", version = "=0.1.0", features = ["font-kit", "macos-wgpu"] }
+gpui_wgpu = { package = "gpui_ce_wgpu", version = "=0.1.0" }
+gpui-glass = { path = "crates/gpui-glass" }
+gpui-smooth = { path = "crates/gpui-smooth", features = ["gpui"] }
+anyhow = "1"
+bytemuck = "1"
+unicode-segmentation = "1"
+env_logger = "0.11"
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[dev-dependencies]
+gpui = { package = "gpui-ce", version = "=0.2.2", default-features = false, features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWorkspace", "NSAccessibility"] }
+
+# Overrides belong to the consuming workspace, never to a library dependency.
+[patch.crates-io]
+gpui-ce = { path = "vendor/gpui-ce/crates/gpui" }
+gpui_ce_wgpu = { path = "vendor/gpui-ce/crates/gpui_wgpu" }
+gpui_ce_platform = { path = "vendor/gpui-ce/crates/gpui_platform" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[[bin]]
+name = "gpui-glass"
+path = "src/main.rs"
+
+[[bin]]
+name = "glass-bench"
+path = "src/bin/bench.rs"
+required-features = ["bench"]
